@@ -776,6 +776,9 @@ async function handleReviewCommand(argv, config) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["base", "scope", "model", "cwd"],
     booleanOptions: ["json", "background", "wait"],
+    // Options must lead: the positionals are free focus text and must not be
+    // mined for flag-shaped tokens.
+    stopAtFirstPositional: true,
     aliasMap: {
       m: "model"
     }
@@ -826,6 +829,9 @@ async function handleTask(argv) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["model", "effort", "cwd", "prompt-file"],
     booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background"],
+    // Options must lead the prompt. Without this, "--write" appearing anywhere
+    // in the prompt text silently escalates the sandbox to workspace-write.
+    stopAtFirstPositional: true,
     aliasMap: {
       m: "model"
     }

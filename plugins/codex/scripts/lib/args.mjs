@@ -2,6 +2,10 @@ export function parseArgs(argv, config = {}) {
   const valueOptions = new Set(config.valueOptions ?? []);
   const booleanOptions = new Set(config.booleanOptions ?? []);
   const aliasMap = config.aliasMap ?? {};
+  // Commands whose positionals are free prompt text must set this: otherwise a
+  // flag-shaped token inside the prompt (e.g. "--write") is consumed as an
+  // option, which both corrupts the prompt and can escalate the sandbox.
+  const stopAtFirstPositional = Boolean(config.stopAtFirstPositional);
   const options = {};
   const positionals = [];
   let passthrough = false;
@@ -21,6 +25,9 @@ export function parseArgs(argv, config = {}) {
 
     if (!token.startsWith("-") || token === "-") {
       positionals.push(token);
+      if (stopAtFirstPositional) {
+        passthrough = true;
+      }
       continue;
     }
 
@@ -46,6 +53,9 @@ export function parseArgs(argv, config = {}) {
       }
 
       positionals.push(token);
+      if (stopAtFirstPositional) {
+        passthrough = true;
+      }
       continue;
     }
 
@@ -68,6 +78,9 @@ export function parseArgs(argv, config = {}) {
     }
 
     positionals.push(token);
+    if (stopAtFirstPositional) {
+      passthrough = true;
+    }
   }
 
   return { options, positionals };

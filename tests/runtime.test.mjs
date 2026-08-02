@@ -723,6 +723,48 @@ test("write task output focuses on the Codex result without generic follow-up hi
   assert.equal(result.stdout, "Handled the requested task.\nTask prompt accepted.\n");
 });
 
+test("task with a leading --write flag requests workspace-write", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const statePath = path.join(binDir, "fake-codex-state.json");
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = run("node", [SCRIPT, "task", "--write", "fix the failing test"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(fakeState.lastThreadStart.sandbox, "workspace-write");
+  assert.equal(fakeState.lastTurnStart.prompt, "fix the failing test");
+});
+
+test("task prompt text mentioning --write stays read-only and keeps the prompt intact", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const statePath = path.join(binDir, "fake-codex-state.json");
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = run("node", [SCRIPT, "task", "explain --write handling"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(fakeState.lastThreadStart.sandbox, "read-only");
+  assert.equal(fakeState.lastTurnStart.prompt, "explain --write handling");
+});
+
 test("task --resume acts like --resume-last without leaking the flag into the prompt", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();

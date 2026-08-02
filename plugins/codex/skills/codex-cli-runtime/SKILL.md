@@ -13,6 +13,7 @@ Primary helper:
 
 Execution rules:
 - The rescue subagent is a forwarder, not an orchestrator. Its only job is to invoke `task` once and return that stdout unchanged.
+- Place every flag (`--write`, `--model`, `--effort`, `--resume-last`, `--fresh`, `--cwd`) before the task text. Option parsing stops at the first non-flag token, so a flag placed after the task text is treated as part of the prompt and ignored as an option.
 - Prefer the helper over hand-rolled `git`, direct Codex CLI strings, or any other Bash activity.
 - Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel` from `codex:codex-rescue`.
 - Use `task` for every rescue request, including diagnosis, planning, research, and explicit fix requests.
