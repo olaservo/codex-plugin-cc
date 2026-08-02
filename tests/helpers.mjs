@@ -4,8 +4,32 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 
+const tempDirs = new Set();
+let cleanupRegistered = false;
+
+// Cleanup runs on process exit rather than per-test: several test files call
+// makeTempDir at module scope, where `t.after` does not exist.
+function registerTempDirCleanup() {
+  if (cleanupRegistered) {
+    return;
+  }
+  cleanupRegistered = true;
+  process.on("exit", () => {
+    for (const dir of tempDirs) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // A dir that fails to unlink must never turn a passing run red.
+      }
+    }
+  });
+}
+
 export function makeTempDir(prefix = "codex-plugin-test-") {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.add(dir);
+  registerTempDirCleanup();
+  return dir;
 }
 
 export function writeExecutable(filePath, source) {
