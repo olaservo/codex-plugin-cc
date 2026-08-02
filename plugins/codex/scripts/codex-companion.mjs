@@ -27,10 +27,20 @@ import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
+  BEDROCK_ONLY_CONFIG_KEY,
+  BEDROCK_ONLY_ENV,
+  buildProviderCompliance,
+  resolveBedrockOnlyMode,
+  SUPPORTED_MODEL_PROVIDER
+} from "./lib/provider-policy.mjs";
+import { extractStateDir } from "./lib/state-dir-args.mjs";
+import {
   generateJobId,
   getConfig,
+  getStateDirOverride,
   listJobs,
   setConfig,
+  setStateDirOverride,
   upsertJob,
   writeJobFile
 } from "./lib/state.mjs";
@@ -76,14 +86,19 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
+      "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--enable-bedrock-only|--disable-bedrock-only] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
       "  node scripts/codex-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/codex-companion.mjs transfer [--source <claude-jsonl>] [--json]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
-      "  node scripts/codex-companion.mjs cancel [job-id] [--json]"
+      "  node scripts/codex-companion.mjs cancel [job-id] [--json]",
+      "",
+      "Global options:",
+      "  --state-dir <path>   Override where job and review-gate state is stored.",
+      "                       Defaults to this plugin's Claude Code data directory.",
+      "                       Rarely needed; intended for debugging and tests."
     ].join("\n")
   );
 }
@@ -187,11 +202,24 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   const authStatus = await getCodexAuthStatus(cwd);
   const config = getConfig(workspaceRoot);
 
+  // Bedrock-only mode is opt-in. When it is off the provider is still reported,
+  // but only authentication decides readiness, exactly as before.
+  const bedrockOnly = resolveBedrockOnlyMode(config, process.env);
+  const compliance = buildProviderCompliance(authStatus, { enforced: bedrockOnly.enabled });
+
   const nextSteps = [];
   if (!codexStatus.available) {
     nextSteps.push("Install Codex with `npm install -g @openai/codex`.");
   }
-  if (codexStatus.available && !authStatus.loggedIn && authStatus.requiresOpenaiAuth) {
+  if (codexStatus.available && bedrockOnly.enabled && !compliance.compliant) {
+    nextSteps.push(
+      `Point Codex at Amazon Bedrock: set \`model_provider = "${SUPPORTED_MODEL_PROVIDER}"\` in \`~/.codex/config.toml\`, then confirm with \`codex\` → \`/status\`.`
+    );
+    nextSteps.push(
+      "Bedrock-only mode is on, so OpenAI-hosted Codex is not accepted. Run `/codex:setup --disable-bedrock-only` if that is not what you want."
+    );
+  }
+  if (codexStatus.available && !bedrockOnly.enabled && !authStatus.loggedIn && authStatus.requiresOpenaiAuth) {
     nextSteps.push("Run `!codex login`.");
     nextSteps.push("If browser login is blocked, retry with `!codex login --device-auth` or `!codex login --with-api-key`.");
   }
@@ -200,13 +228,15 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   }
 
   return {
-    ready: nodeStatus.available && codexStatus.available && authStatus.loggedIn,
+    ready: nodeStatus.available && codexStatus.available && authStatus.loggedIn && compliance.compliant,
     node: nodeStatus,
     npm: npmStatus,
     codex: codexStatus,
     auth: authStatus,
+    provider: compliance,
     sessionRuntime: getSessionRuntimeStatus(process.env, workspaceRoot),
     reviewGateEnabled: Boolean(config.stopReviewGate),
+    bedrockOnly,
     actionsTaken,
     nextSteps
   };
@@ -215,11 +245,21 @@ async function buildSetupReport(cwd, actionsTaken = []) {
 async function handleSetup(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
-    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"]
+    booleanOptions: [
+      "json",
+      "enable-review-gate",
+      "disable-review-gate",
+      "enable-bedrock-only",
+      "disable-bedrock-only"
+    ]
   });
 
   if (options["enable-review-gate"] && options["disable-review-gate"]) {
     throw new Error("Choose either --enable-review-gate or --disable-review-gate.");
+  }
+
+  if (options["enable-bedrock-only"] && options["disable-bedrock-only"]) {
+    throw new Error("Choose either --enable-bedrock-only or --disable-bedrock-only.");
   }
 
   const cwd = resolveCommandCwd(options);
@@ -232,6 +272,19 @@ async function handleSetup(argv) {
   } else if (options["disable-review-gate"]) {
     setConfig(workspaceRoot, "stopReviewGate", false);
     actionsTaken.push(`Disabled the stop-time review gate for ${workspaceRoot}.`);
+  }
+
+  if (options["enable-bedrock-only"] || options["disable-bedrock-only"]) {
+    const enabling = Boolean(options["enable-bedrock-only"]);
+    setConfig(workspaceRoot, BEDROCK_ONLY_CONFIG_KEY, enabling);
+    actionsTaken.push(
+      `${enabling ? "Enabled" : "Disabled"} bedrock-only mode for ${workspaceRoot}.`
+    );
+    if (typeof process.env[BEDROCK_ONLY_ENV] === "string" && process.env[BEDROCK_ONLY_ENV].trim()) {
+      actionsTaken.push(
+        `Note: ${BEDROCK_ONLY_ENV} is set in the environment and overrides this per-workspace setting.`
+      );
+    }
   }
 
   const finalReport = await buildSetupReport(cwd, actionsTaken);
@@ -670,7 +723,17 @@ async function runForegroundCommand(job, runner, options = {}) {
 
 function spawnDetachedTaskWorker(cwd, jobId) {
   const scriptPath = path.join(ROOT_DIR, "scripts", "codex-companion.mjs");
-  const child = spawn(process.execPath, [scriptPath, "task-worker", "--cwd", cwd, "--job-id", jobId], {
+  // Forward --state-dir, or the detached worker re-resolves its own dir and
+  // writes the job where the parent is not reading. It has to lead: the global
+  // parser only scans up to the first non-option token, and `--cwd <path>`
+  // supplies one.
+  const stateDir = getStateDirOverride();
+  const workerArgv = [scriptPath, "task-worker"];
+  if (stateDir) {
+    workerArgv.push("--state-dir", stateDir);
+  }
+  workerArgv.push("--cwd", cwd, "--job-id", jobId);
+  const child = spawn(process.execPath, workerArgv, {
     cwd,
     env: process.env,
     detached: true,
@@ -1022,11 +1085,35 @@ async function handleCancel(argv) {
 }
 
 async function main() {
-  const [subcommand, ...argv] = process.argv.slice(2);
+  // --state-dir is global, so it is accepted on either side of the subcommand.
+  // Strip a leading one first, then re-derive the subcommand from what is left.
+  const commandLine = process.argv.slice(2);
+  let leadingStateDir = null;
+  let remaining = commandLine;
+  if (commandLine[0]?.startsWith("--state-dir")) {
+    const leading = extractStateDir(commandLine);
+    leadingStateDir = leading.stateDir;
+    remaining = leading.rest;
+  }
+
+  const [subcommand, ...rawArgv] = remaining;
   if (!subcommand || subcommand === "help" || subcommand === "--help") {
     printUsage();
     return;
   }
+
+  // `task "<raw>"` passes one quoted string that normalizeArgv splits
+  // downstream, so it must be tokenized here to find a leading --state-dir --
+  // but only when the option is really present, or the prompt's whitespace and
+  // quoting would be rewritten on its way to Codex.
+  const isSingleRawString = rawArgv.length === 1 && rawArgv[0]?.includes("--state-dir");
+  const probed = extractStateDir(isSingleRawString ? splitRawArgumentString(rawArgv[0]) : rawArgv);
+  const stateDir = leadingStateDir ?? probed.stateDir;
+  if (stateDir) {
+    setStateDirOverride(stateDir);
+  }
+  // Only adopt the tokenized form when --state-dir was really consumed from it.
+  const argv = isSingleRawString && !probed.stateDir ? rawArgv : probed.rest;
 
   switch (subcommand) {
     case "setup":

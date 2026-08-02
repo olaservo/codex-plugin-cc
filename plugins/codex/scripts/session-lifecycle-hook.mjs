@@ -18,7 +18,6 @@ import { TRANSCRIPT_PATH_ENV } from "./lib/claude-session-transfer.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
-const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 
 function readHookInput() {
   const raw = fs.readFileSync(0, "utf8").trim();
@@ -77,7 +76,9 @@ function cleanupSessionJobs(cwd, sessionId) {
 function handleSessionStart(input) {
   appendEnvVar(SESSION_ID_ENV, input.session_id);
   appendEnvVar(TRANSCRIPT_PATH_ENV, input.transcript_path);
-  appendEnvVar(PLUGIN_DATA_ENV, process.env[PLUGIN_DATA_ENV]);
+  // Deliberately not appending CLAUDE_PLUGIN_DATA: it goes into the session-wide
+  // env file, so the last SessionStart hook to run would win it for every other
+  // plugin. state.mjs resolves this plugin's own data dir instead.
 }
 
 async function handleSessionEnd(input) {

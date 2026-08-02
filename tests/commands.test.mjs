@@ -214,7 +214,7 @@ test("setup command can offer Codex install and still points users to codex logi
   const setup = read("commands/setup.md");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
 
-  assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\]'/);
+  assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\] \[--enable-bedrock-only\|--disable-bedrock-only\]'/);
   assert.match(setup, /AskUserQuestion/);
   assert.match(setup, /npm install -g @openai\/codex/);
   assert.match(setup, /codex-companion\.mjs" setup --json \$ARGUMENTS/);
@@ -222,4 +222,16 @@ test("setup command can offer Codex install and still points users to codex logi
   assert.match(readme, /offer to install Codex for you/i);
   assert.match(readme, /\/codex:setup --enable-review-gate/);
   assert.match(readme, /\/codex:setup --disable-review-gate/);
+});
+
+test("setup command and README document the opt-in bedrock-only mode", () => {
+  const setup = read("commands/setup.md");
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+
+  assert.match(setup, /\/codex:setup --enable-bedrock-only|--enable-bedrock-only/);
+  assert.match(setup, /amazon-bedrock/);
+  assert.match(readme, /\/codex:setup --enable-bedrock-only/);
+  assert.match(readme, /\/codex:setup --disable-bedrock-only/);
+  assert.match(readme, /CODEX_PLUGIN_BEDROCK_ONLY/);
+  assert.match(readme, /amazon-bedrock/);
 });

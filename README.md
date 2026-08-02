@@ -222,7 +222,7 @@ Examples:
 Checks whether Codex is installed and authenticated.
 If Codex is missing and npm is available, it can offer to install Codex for you.
 
-You can also use `/codex:setup` to manage the optional review gate.
+You can also use `/codex:setup` to manage the optional review gate and the optional bedrock-only mode.
 
 #### Enabling review gate
 
@@ -235,6 +235,19 @@ When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted
 
 > [!WARNING]
 > The review gate can create a long-running Claude/Codex loop and may drain usage limits quickly. Only enable it when you plan to actively monitor the session.
+
+#### Enabling bedrock-only mode
+
+```bash
+/codex:setup --enable-bedrock-only
+/codex:setup --disable-bedrock-only
+```
+
+Off by default. `/codex:setup` always reports which model provider Codex is configured with, but by default only authentication decides whether setup is ready — and OpenAI-hosted auth counts as authenticated.
+
+Bedrock-only mode makes the provider a hard requirement: setup reports ready only when Codex's `model_provider` is `amazon-bedrock`, so prompts, source code, and diffs stay inside your own AWS account. While it is on, setup never suggests `codex login`, `--with-api-key`, `--device-auth`, or `OPENAI_API_KEY` — those all route source code to OpenAI, which is what the mode exists to prevent. Point Codex at Bedrock by setting `model_provider = "amazon-bedrock"` in `~/.codex/config.toml`, then confirm with `codex` → `/status`.
+
+The setup flags are per workspace. To pin the policy across every workspace on a machine — or across a fleet — set `CODEX_PLUGIN_BEDROCK_ONLY=1` in the environment (for example in `.claude/settings.json` under `env`). The environment variable overrides the per-workspace setting in both directions; `CODEX_PLUGIN_BEDROCK_ONLY=0` forces the mode off.
 
 ## Typical Flows
 

@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
-import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
+import { initGitRepo, makeTempDir, run, useTempPluginData } from "./helpers.mjs";
 import { loadBrokerSession, saveBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
 
@@ -15,6 +15,10 @@ const PLUGIN_ROOT = path.join(ROOT, "plugins", "codex");
 const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex-companion.mjs");
 const STOP_HOOK = path.join(PLUGIN_ROOT, "scripts", "stop-review-gate-hook.mjs");
 const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.mjs");
+
+// Pin state to a throwaway dir for this process and every child it spawns.
+// state.mjs refuses to guess, and the source checkout is not an installed plugin.
+useTempPluginData();
 
 async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
   const start = Date.now();
@@ -669,7 +673,7 @@ test("task --resume-last ignores running tasks from other Claude sessions", () =
   assert.match(resume.stderr, /No previous Codex task thread was found for this repository\./);
 });
 
-test("session start hook exports the Claude session id, transcript path, and plugin data dir", () => {
+test("session start hook exports the Claude session id and transcript path, but not the plugin data dir", () => {
   const repo = makeTempDir();
   const envFile = path.join(makeTempDir(), "claude-env.sh");
   fs.writeFileSync(envFile, "", "utf8");
@@ -692,9 +696,12 @@ test("session start hook exports the Claude session id, transcript path, and plu
   });
 
   assert.equal(result.status, 0, result.stderr);
+  // CLAUDE_PLUGIN_DATA is deliberately absent: the session env file is shared by
+  // every plugin, so writing it there lets the last SessionStart hook to run win
+  // it for all of them.
   assert.equal(
     fs.readFileSync(envFile, "utf8"),
-    `export CODEX_COMPANION_SESSION_ID='sess-current'\nexport CODEX_COMPANION_TRANSCRIPT_PATH='${transcriptPath}'\nexport CLAUDE_PLUGIN_DATA='${pluginDataDir}'\n`
+    `export CODEX_COMPANION_SESSION_ID='sess-current'\nexport CODEX_COMPANION_TRANSCRIPT_PATH='${transcriptPath}'\n`
   );
 });
 

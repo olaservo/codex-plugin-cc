@@ -2,15 +2,118 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
 const STATE_VERSION = 1;
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-const FALLBACK_STATE_ROOT_DIR = path.join(os.tmpdir(), "codex-companion");
+const CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR";
+const INSTALLED_PLUGINS_FILE = "installed_plugins.json";
 const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 50;
+
+// Resolve this plugin's own data dir instead of falling back to os.tmpdir(),
+// which split state between the Stop hook and the commands depending on who saw
+// CLAUDE_PLUGIN_DATA. Fails loudly rather than writing where the hooks will
+// never read.
+let stateDirOverride = null;
+let ownDataDirCache;
+
+export function setStateDirOverride(dir) {
+  stateDirOverride = dir ? path.resolve(dir) : null;
+  ownDataDirCache = undefined;
+}
+
+export function getStateDirOverride() {
+  return stateDirOverride;
+}
+
+function resolveConfigDir() {
+  const configured = process.env[CONFIG_DIR_ENV];
+  if (configured && configured.trim()) {
+    return path.resolve(configured.trim());
+  }
+  return path.join(os.homedir(), ".claude");
+}
+
+// Derive this plugin's data dir the same way Claude Code does, without
+// hardcoding a plugin name (forks rename it): find the installed_plugins.json
+// entry whose installPath contains this very file, then map its
+// "<plugin>@<marketplace>" key to the "<plugin>-<marketplace>" data dir.
+function resolveOwnDataDir() {
+  if (ownDataDirCache !== undefined) {
+    return ownDataDirCache;
+  }
+
+  ownDataDirCache = null;
+  const configDir = resolveConfigDir();
+  const registryFile = path.join(configDir, "plugins", INSTALLED_PLUGINS_FILE);
+
+  try {
+    const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    const plugins = registry?.plugins;
+    if (!plugins || typeof plugins !== "object") {
+      return ownDataDirCache;
+    }
+
+    let selfPath = fileURLToPath(import.meta.url);
+    try {
+      selfPath = fs.realpathSync.native(selfPath);
+    } catch {
+      // keep the non-canonical path
+    }
+
+    for (const [key, entries] of Object.entries(plugins)) {
+      for (const entry of Array.isArray(entries) ? entries : [entries]) {
+        const installPath = entry?.installPath;
+        if (typeof installPath !== "string" || !installPath) {
+          continue;
+        }
+
+        let canonicalInstallPath = installPath;
+        try {
+          canonicalInstallPath = fs.realpathSync.native(installPath);
+        } catch {
+          canonicalInstallPath = installPath;
+        }
+
+        if (selfPath.startsWith(canonicalInstallPath + path.sep)) {
+          ownDataDirCache = path.join(configDir, "plugins", "data", key.replace("@", "-"));
+          return ownDataDirCache;
+        }
+      }
+    }
+  } catch {
+    // unreadable or malformed registry -- fall through to the loud failure
+  }
+
+  return ownDataDirCache;
+}
+
+function resolveStateRoot() {
+  if (stateDirOverride) {
+    return stateDirOverride;
+  }
+
+  const pluginDataDir = process.env[PLUGIN_DATA_ENV];
+  if (pluginDataDir && pluginDataDir.trim()) {
+    return path.join(pluginDataDir.trim(), "state");
+  }
+
+  const ownDataDir = resolveOwnDataDir();
+  if (ownDataDir) {
+    return path.join(ownDataDir, "state");
+  }
+
+  throw new Error(
+    `Unable to resolve the Codex plugin state directory: ${PLUGIN_DATA_ENV} is unset and this plugin ` +
+      `could not find its own entry in ${path.join(resolveConfigDir(), "plugins", INSTALLED_PLUGINS_FILE)}. ` +
+      `Pass --state-dir <path> or set ${PLUGIN_DATA_ENV} explicitly. ` +
+      `(Refusing to fall back to a temp directory, which would hide job and review-gate state from the hooks.)`
+  );
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -20,6 +123,9 @@ function defaultState() {
   return {
     version: STATE_VERSION,
     config: {
+      // `bedrockOnly` is deliberately absent: an unset key means "not opted in",
+      // which keeps the policy out of every workspace's state.json until someone
+      // actually toggles it.
       stopReviewGate: false
     },
     jobs: []
@@ -38,9 +144,7 @@ export function resolveStateDir(cwd) {
   const slugSource = path.basename(workspaceRoot) || "workspace";
   const slug = slugSource.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "workspace";
   const hash = createHash("sha256").update(canonicalWorkspaceRoot).digest("hex").slice(0, 16);
-  const pluginDataDir = process.env[PLUGIN_DATA_ENV];
-  const stateRoot = pluginDataDir ? path.join(pluginDataDir, "state") : FALLBACK_STATE_ROOT_DIR;
-  return path.join(stateRoot, `${slug}-${hash}`);
+  return path.join(resolveStateRoot(), `${slug}-${hash}`);
 }
 
 export function resolveStateFile(cwd) {

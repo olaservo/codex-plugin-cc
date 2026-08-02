@@ -72,6 +72,7 @@ function buildAccountReadResult() {
       return { account: null, requiresOpenaiAuth: true };
     case "provider-no-auth":
     case "env-key-provider":
+    case "bedrock-provider":
       return { account: null, requiresOpenaiAuth: false };
     case "api-key-account-only":
       return { account: { type: "apiKey" }, requiresOpenaiAuth: true };
@@ -88,6 +89,11 @@ function buildConfigReadResult() {
     case "provider-no-auth":
       return {
         config: { model_provider: "ollama" },
+        origins: {}
+      };
+    case "bedrock-provider":
+      return {
+        config: { model_provider: "amazon-bedrock" },
         origins: {}
       };
     case "env-key-provider":
@@ -257,7 +263,7 @@ if (args[0] === "app-server" && args[1] === "--help") {
   process.exit(0);
 }
 if (args[0] === "login" && args[1] === "status") {
-  if (BEHAVIOR === "logged-out" || BEHAVIOR === "refreshable-auth" || BEHAVIOR === "auth-run-fails" || BEHAVIOR === "provider-no-auth" || BEHAVIOR === "env-key-provider" || BEHAVIOR === "api-key-account-only") {
+  if (BEHAVIOR === "logged-out" || BEHAVIOR === "refreshable-auth" || BEHAVIOR === "auth-run-fails" || BEHAVIOR === "provider-no-auth" || BEHAVIOR === "env-key-provider" || BEHAVIOR === "bedrock-provider" || BEHAVIOR === "api-key-account-only") {
     console.error("not authenticated");
     process.exit(1);
   }

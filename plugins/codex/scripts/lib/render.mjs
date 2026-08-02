@@ -174,6 +174,14 @@ function appendReasoningSection(lines, reasoningSummary) {
   }
 }
 
+function renderBedrockOnlyMode(bedrockOnly) {
+  if (!bedrockOnly) {
+    return "disabled";
+  }
+  const state = bedrockOnly.enabled ? "enabled" : "disabled";
+  return bedrockOnly.source === "env" ? `${state} (from CODEX_PLUGIN_BEDROCK_ONLY)` : state;
+}
+
 export function renderSetupReport(report) {
   const lines = [
     "# Codex Setup",
@@ -185,8 +193,12 @@ export function renderSetupReport(report) {
     `- npm: ${report.npm.detail}`,
     `- codex: ${report.codex.detail}`,
     `- auth: ${report.auth.detail}`,
+    // Authenticated does not mean approved -- OpenAI-hosted auth also reports as
+    // logged in, so the provider is always shown.
+    `- model provider: ${report.provider?.detail ?? "unknown"}`,
     `- session runtime: ${report.sessionRuntime.label}`,
     `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
+    `- bedrock-only mode: ${renderBedrockOnlyMode(report.bedrockOnly)}`,
     ""
   ];
 
