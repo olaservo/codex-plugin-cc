@@ -748,17 +748,29 @@ function enqueueBackgroundTask(cwd, job, request) {
   const { logFile } = createTrackedProgress(job);
   appendLogLine(logFile, "Queued for background execution.");
 
-  const child = spawnDetachedTaskWorker(cwd, job.id);
+  // The job record must exist before the worker starts: a worker that runs
+  // immediately looks up its stored job and exits when it finds nothing,
+  // leaving a permanently queued job behind.
   const queuedRecord = {
     ...job,
     status: "queued",
     phase: "queued",
-    pid: child.pid ?? null,
+    pid: null,
     logFile,
     request
   };
   writeJobFile(job.workspaceRoot, job.id, queuedRecord);
   upsertJob(job.workspaceRoot, queuedRecord);
+
+  const child = spawnDetachedTaskWorker(cwd, job.id);
+  // Backfill the pid only while the job is still queued; once the worker is
+  // running it records its own pid and this write would clobber its progress.
+  const storedJob = readStoredJob(job.workspaceRoot, job.id);
+  if (storedJob && storedJob.status === "queued") {
+    const withPid = { ...storedJob, pid: child.pid ?? null };
+    writeJobFile(job.workspaceRoot, job.id, withPid);
+    upsertJob(job.workspaceRoot, withPid);
+  }
 
   return {
     payload: {
